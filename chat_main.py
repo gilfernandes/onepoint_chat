@@ -10,6 +10,8 @@ from langchain.chains import RetrievalQA
 from langchain.chains.question_answering import load_qa_chain
 from langchain.chat_models import ChatOpenAI
 from langchain.callbacks import get_openai_callback
+from io import StringIO
+import streamlit as st
 import shutil
 
 import streamlit as st
@@ -55,7 +57,6 @@ def load_csv(file_path: Path) -> List[Document]:
     return texts
 
 
-
 def extract_embeddings(texts: List[Document], doc_path: Path) -> Chroma:
     """
     Either saves the Chroma embeddings locally or reads them from disk, in case they exist.
@@ -65,7 +66,7 @@ def extract_embeddings(texts: List[Document], doc_path: Path) -> Chroma:
     # if Path(embedding_dir).exists():
     #     return Chroma(persist_directory=embedding_dir, embedding_function=cfg.embeddings)
     if Path(embedding_dir).exists():
-        shutil.rmtree(embedding_dir)
+        shutil.rmtree(embedding_dir, ignore_errors=True)
     try:
         docsearch = Chroma.from_documents(texts, cfg.embeddings, persist_directory=embedding_dir)
         docsearch.persist()
@@ -85,13 +86,28 @@ def process_question(similar_docs: List[Document], user_question: str) -> str:
 
 
 def write_history(question):
-    with open(cfg.history_file, "a") as f:
-        f.write(f"{question}\n")
+    if len(question) > 0:
+        with open(cfg.history_file, "a") as f:
+            f.write(f"{question}\n")
 
 
+@st.cache_data()
 def read_history()-> List[str]:
     with open(cfg.history_file, "r") as f:
-        return f.readlines()
+        return list(set([l for l in f.readlines() if len(l.strip()) > 0]))
+    
+
+def process_user_question(docsearch: Chroma, user_question: str):
+    if user_question:
+        similar_docs: List[Document] = docsearch.similarity_search(user_question, k = 5)
+        response, similar_texts = process_question(similar_docs, user_question)
+        st.markdown(response)
+        if len(similar_texts) > 0:
+            write_history(user_question)
+            st.text("Similar entries (Vector database results)")
+            st.write(similar_texts)
+        else:
+            st.warning("This answer is unrelated to our context.")
     
 
 def init_streamlit(docsearch: Chroma, texts):
@@ -104,27 +120,30 @@ def init_streamlit(docsearch: Chroma, texts):
     st.set_page_config(page_title=title)
     st.header(title)
     st.write(f"Context with {len(texts)} entries")
-    user_question = st.text_input("Your question")
-    with st.spinner('Wait for it...'):
-        if user_question:
-            similar_docs: List[Document] = docsearch.similarity_search(user_question, k = 5)
-            response, similar_texts = process_question(similar_docs, user_question)
-            st.markdown(response)
-            if len(similar_texts) > 0:
-                write_history(user_question)
-                st.text("Similar entries (Vector database results)")
-                st.write(similar_texts)
-            else:
-                st.warning("This answer is unrelated to Onepoint.")
+    simple_chat_tab, historical_tab = st.tabs(["Simple Chat", "Historical Questions"])
+    with simple_chat_tab:
+        user_question = st.text_input("Your question")
+        with st.spinner('Please wait ...'):
+            process_user_question(docsearch=docsearch, user_question=user_question)
+    with historical_tab:
+        user_question_2 = st.selectbox("Ask a previous question", read_history())
+        with st.spinner('Please wait ...'):
+            logger.info(f"question: {user_question_2}")
+            process_user_question(docsearch=docsearch, user_question=user_question_2)
 
 
-def main(doc_location: str ='onepoint_chat'):
-    logger.info(f"Using doc location {doc_location}.")
+def load_texts(doc_location: str):
     doc_path = Path(doc_location)
     texts = []
     for p in doc_path.glob("*.csv"):
         texts.extend(load_csv(p))
     logger.info(f"Length of texts: {len(texts)}")
+    return texts, doc_path
+
+
+def main(doc_location: str ='onepoint_chat'):
+    logger.info(f"Using doc location {doc_location}.")
+    texts, doc_path = load_texts(doc_location=doc_location)
     docsearch = extract_embeddings(texts=texts, doc_path=Path(doc_path))
     init_streamlit(docsearch=docsearch, texts=texts)
 
