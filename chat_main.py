@@ -214,7 +214,8 @@ def load_website_texts(url_list: List[str]) -> List[Document]:
 def main(doc_location: str ='onepoint_chat'):
     """
     Main entry point for the application.
-    It loads all texts from a specific folder, creates the vector database and initializes the user interface.
+    It loads all texts from a specific folder and specific web pages, 
+    creates the vector database and initializes the user interface.
     :param doc_location: The location of the CSV files
     """
     logger.info(f"Using doc location {doc_location}.")
